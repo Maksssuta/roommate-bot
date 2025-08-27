@@ -232,8 +232,10 @@ async def process_like(callback: CallbackQuery):
 
 # ================== ЗАПУСК ==================
 async def main():
-    logging.info("Удаляем webhook (если есть) и запускаем polling...")
+  logging.info("Удаляем webhook и pending updates...")
+    # Критично для предотвращения TelegramConflictError
     await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("Стартуем polling...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
