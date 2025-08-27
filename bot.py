@@ -1,105 +1,36 @@
-import sqlite3
-import os
-import asyncio
-import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, CallbackQuery
-from aiogram.filters import Command
+# Предполагается, что предыдущий код с FSM и таблицами остаётся без изменений
 
-logging.basicConfig(level=logging.INFO)
+# ================== ПОИСК С КАРУСЕЛЬЮ ==================
+from collections import defaultdict
 
-API_TOKEN = "7993633698:AAGyhYZonytprP2UypN__galoGDgi2TvlBw"  # Токен берём из переменной окружения
+# Хранение индекса текущей анкеты для каждого пользователя
+user_search_index = defaultdict(int)
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
-
-# ================== БАЗА ДАННЫХ ==================
-DB_PATH = os.getenv("DB_PATH", "roommates.db")
-os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-cursor = conn.cursor()
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    telegram_id INTEGER UNIQUE,
-    first_name TEXT,
-    last_name TEXT,
-    role TEXT,
-    apartment_desc TEXT,
-    price INTEGER
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS likes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    from_user INTEGER,
-    to_user INTEGER,
-    UNIQUE(from_user, to_user)
-)
-""")
-
-conn.commit()
-
-# ================== ОБРАБОТЧИКИ ==================
-
-@dp.message(Command("start"))
-async def start(message: Message):
-    cursor.execute("INSERT OR IGNORE INTO users (telegram_id, first_name, last_name) VALUES (?, ?, ?)",
-                   (message.from_user.id, message.from_user.first_name, message.from_user.last_name))
-    conn.commit()
-
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="Ищу соседа для подселения", callback_data="role_roommate")],
-        [types.InlineKeyboardButton(text="Ищу жильё и сожителя", callback_data="role_seeker")]
-    ])
-    await message.answer("Привет! 🏠 Давай создадим твою анкету. Кем ты являешься?", reply_markup=kb)
-
-
-@dp.callback_query(lambda c: c.data.startswith("role"))
-async def process_role(callback: CallbackQuery):
-    role = callback.data.split("_")[1]
-    cursor.execute("UPDATE users SET role=? WHERE telegram_id=?", (role, callback.from_user.id))
-    conn.commit()
-
-    if role == "roommate":
-        await bot.send_message(callback.from_user.id, "Опиши квартиру (район, условия, стоимость)")
-    else:
-        await bot.send_message(callback.from_user.id, "Отлично! Мы будем показывать тебе квартиры, где ищут соседей. Используй /search")
-
-    await callback.answer()
-
-
-@dp.message()
-async def save_apartment_desc(message: Message):
-    cursor.execute("SELECT role FROM users WHERE telegram_id=?", (message.from_user.id,))
-    row = cursor.fetchone()
-    if row and row[0] == "roommate":
-        cursor.execute("UPDATE users SET apartment_desc=? WHERE telegram_id=?", (message.text, message.from_user.id))
-        conn.commit()
-        await message.answer("Описание квартиры сохранено ✅ Теперь используй /search, чтобы найти жильца")
-
-
-@dp.message(Command("search"))
-async def search(message: Message):
-    cursor.execute("SELECT role FROM users WHERE telegram_id=?", (message.from_user.id,))
+async def send_next_profile(chat_id: int, user_id: int):
+    cursor.execute("SELECT role FROM users WHERE telegram_id=?", (user_id,))
     row = cursor.fetchone()
     if not row:
-        await message.answer("Сначала зарегистрируй анкету через /start")
+        await bot.send_message(chat_id, "Сначала зарегистрируй анкету через /start")
         return
 
     role = row[0]
     if role == "roommate":
-        cursor.execute("SELECT telegram_id, first_name, last_name FROM users WHERE role='seeker' AND telegram_id != ? LIMIT 1", (message.from_user.id,))
+        cursor.execute("SELECT telegram_id, first_name, last_name, user_photo, about FROM users WHERE role='seeker' AND telegram_id != ? ORDER BY id", (user_id,))
     else:
-        cursor.execute("SELECT telegram_id, first_name, last_name, apartment_desc FROM users WHERE role='roommate' AND telegram_id != ? LIMIT 1", (message.from_user.id,))
+        cursor.execute("SELECT telegram_id, first_name, last_name, user_photo, apartment_photo, apartment_desc, price FROM users WHERE role='roommate' AND telegram_id != ? ORDER BY id", (user_id,))
 
-    match = cursor.fetchone()
-    if not match:
-        await message.answer("Пока нет подходящих анкет 😔")
+    matches = cursor.fetchall()
+    if not matches:
+        await bot.send_message(chat_id, "Пока нет подходящих анкет 😔")
         return
+
+    index = user_search_index[user_id]
+    if index >= len(matches):
+        await bot.send_message(chat_id, "Анкеты закончились 😔")
+        user_search_index[user_id] = 0
+        return
+
+    match = matches[index]
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="✅ Заинтересован", callback_data=f"like_{match[0]}")],
@@ -107,13 +38,26 @@ async def search(message: Message):
     ])
 
     if role == "roommate":
-        text = f"👤 {match[1]} {match[2]}\nИщет жильё и сожителя"
+        text = f"👤 {match[1]} {match[2]}\n{match[4]}"
+        await bot.send_photo(chat_id, photo=match[3], caption=text, reply_markup=kb)
     else:
-        text = f"👤 {match[1]} {match[2]}\nПредлагает квартиру:\n{match[3]}"
+        text = f"👤 {match[1]} {match[2]}\nО квартире:\n{match[5]}\nЦена: {match[6]}"
+        # Отправляем фото пользователя + квартиры
+        await bot.send_media_group(
+            chat_id,
+            media=[
+                types.InputMediaPhoto(match[3], caption="Пользователь"),
+                types.InputMediaPhoto(match[4], caption=text)
+            ]
+        )
+        await bot.send_message(chat_id, "Выбери действие:", reply_markup=kb)
 
-    await message.answer(text, reply_markup=kb)
+@dp.message(Command("search"))
+async def search(message: Message):
+    user_search_index[message.from_user.id] = 0  # Начинаем с первой анкеты
+    await send_next_profile(message.chat.id, message.from_user.id)
 
-
+# ================== ЛАЙКИ С ПЕРЕХОДОМ К СЛЕДУЮЩЕЙ АНКЕТЕ ==================
 @dp.callback_query(lambda c: c.data.startswith(("like", "skip")))
 async def process_like(callback: CallbackQuery):
     action, target_id = callback.data.split("_")
@@ -128,10 +72,8 @@ async def process_like(callback: CallbackQuery):
         mutual = cursor.fetchone()
 
         if mutual:
-            # Получаем данные пользователей
             cursor.execute("SELECT first_name, last_name FROM users WHERE telegram_id=?", (target_id,))
             target_data = cursor.fetchone()
-
             cursor.execute("SELECT first_name, last_name FROM users WHERE telegram_id=?", (callback.from_user.id,))
             user_data = cursor.fetchone()
 
@@ -144,10 +86,7 @@ async def process_like(callback: CallbackQuery):
     else:
         await callback.answer("Пропущено ❌")
 
-# ================== ЗАПУСК ==================
-async def main():
-    logging.info("Бот запущен и слушает сообщения...")
-    await dp.start_polling(bot)
+    # Переходим к следующей анкете
+    user_search_index[callback.from_user.id] += 1
+    await send_next_profile(callback.from_user.id, callback.from_user.id)
 
-if __name__ == "__main__":
-    asyncio.run(main())
