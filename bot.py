@@ -8,7 +8,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import Command
+from aiogram.fsm.filters import StateFilter
 from aiogram.fsm.storage.memory import MemoryStorage
 
 logging.basicConfig(level=logging.INFO)
