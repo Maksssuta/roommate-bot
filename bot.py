@@ -13,7 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 logging.basicConfig(level=logging.INFO)
 
-API_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_БОТА")
+API_TOKEN = "8250866605:AAGKcaplvHLEW9BH7efSbbn2hSTN1K7TFZg"
 
 # ================== ИНИЦИАЛИЗАЦИЯ БОТА ==================
 bot = Bot(token=API_TOKEN)
