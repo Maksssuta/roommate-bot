@@ -3,16 +3,17 @@ import os
 import asyncio
 import logging
 from collections import defaultdict
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 logging.basicConfig(level=logging.INFO)
 
-API_TOKEN = "8250866605:AAGKcaplvHLEW9BH7efSbbn2hSTN1K7TFZg"
+API_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_БОТА")
 
 # ================== ИНИЦИАЛИЗАЦИЯ БОТА ==================
 bot = Bot(token=API_TOKEN)
@@ -109,7 +110,7 @@ async def send_next_profile(chat_id: int, user_id: int):
 
 # ================== ОБРАБОТЧИКИ ==================
 
-# /start - начало анкеты
+# /start
 @dp.message(Command("start"))
 async def start(message: Message, state: FSMContext):
     await state.clear()
@@ -135,11 +136,14 @@ async def process_role(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 # Фото пользователя
-@dp.message(lambda message: message.photo, StateFilter(Form.waiting_for_user_photo))
+@dp.message(StateFilter(Form.waiting_for_user_photo))
 async def user_photo(message: Message, state: FSMContext):
+    if not message.photo:
+        await message.answer("Пожалуйста, отправь фото.")
+        return
     photo_id = message.photo[-1].file_id
     await state.update_data(user_photo=photo_id)
-    await message.answer("Расскажи немного о себе (краткая информация).")
+    await message.answer("Фото получено ✅\nРасскажи немного о себе.")
     await Form.waiting_for_about.set()
 
 # Краткая информация
@@ -151,19 +155,23 @@ async def about(message: Message, state: FSMContext):
         await message.answer("Теперь пришли фото квартиры.")
         await Form.waiting_for_apartment_photo.set()
     else:
+        # Сохраняем в базу
         cursor.execute("""
             UPDATE users SET user_photo=?, about=? WHERE telegram_id=?
         """, (data['user_photo'], data['about'], message.from_user.id))
         conn.commit()
-        await message.answer("Анкета сохранена! Используй /search для поиска квартиры или соседа.")
+        await message.answer("Анкета сохранена ✅ Используй /search")
         await state.clear()
 
 # Фото квартиры
-@dp.message(lambda message: message.photo, StateFilter(Form.waiting_for_apartment_photo))
+@dp.message(StateFilter(Form.waiting_for_apartment_photo))
 async def apartment_photo(message: Message, state: FSMContext):
+    if not message.photo:
+        await message.answer("Пожалуйста, отправь фото квартиры.")
+        return
     photo_id = message.photo[-1].file_id
     await state.update_data(apartment_photo=photo_id)
-    await message.answer("Опиши квартиру (район, условия и т.д.).")
+    await message.answer("Фото квартиры сохранено ✅\nОпиши квартиру (район, условия и т.д.).")
     await Form.waiting_for_apartment_desc.set()
 
 # Описание квартиры
@@ -191,13 +199,13 @@ async def price(message: Message, state: FSMContext):
     await message.answer("Анкета сохранена ✅ Теперь используй /search для поиска жильцов.")
     await state.clear()
 
-# /search - запуск карусели
+# /search
 @dp.message(Command("search"))
 async def search(message: Message):
     user_search_index[message.from_user.id] = 0
     await send_next_profile(message.chat.id, message.from_user.id)
 
-# Лайки и пропуск с переходом к следующей анкете
+# Лайки и пропуск
 @dp.callback_query(lambda c: c.data.startswith(("like", "skip")))
 async def process_like(callback: CallbackQuery):
     action, target_id = callback.data.split("_")
@@ -206,11 +214,8 @@ async def process_like(callback: CallbackQuery):
     if action == "like":
         cursor.execute("INSERT OR IGNORE INTO likes (from_user, to_user) VALUES (?, ?)", (callback.from_user.id, target_id))
         conn.commit()
-
-        # Проверяем взаимный лайк
         cursor.execute("SELECT 1 FROM likes WHERE from_user=? AND to_user=?", (target_id, callback.from_user.id))
         mutual = cursor.fetchone()
-
         if mutual:
             cursor.execute("SELECT first_name, last_name FROM users WHERE telegram_id=?", (target_id,))
             target_data = cursor.fetchone()
@@ -218,25 +223,24 @@ async def process_like(callback: CallbackQuery):
             user_data = cursor.fetchone()
 
             await bot.send_message(callback.from_user.id,
-                                   f"🎉 У вас взаимный интерес! Вот ссылка на собеседника: tg://user?id={target_id}\n👤 {target_data[0]} {target_data[1]}")
+                                   f"🎉 Взаимный интерес! tg://user?id={target_id}\n👤 {target_data[0]} {target_data[1]}")
             await bot.send_message(target_id,
-                                   f"🎉 У вас взаимный интерес! Вот ссылка на собеседника: tg://user?id={callback.from_user.id}\n👤 {user_data[0]} {user_data[1]}")
+                                   f"🎉 Взаимный интерес! tg://user?id={callback.from_user.id}\n👤 {user_data[0]} {user_data[1]}")
         else:
             await callback.answer("Отправлен интерес ✅")
     else:
         await callback.answer("Пропущено ❌")
 
-    # Переход к следующей анкете
     user_search_index[callback.from_user.id] += 1
     await send_next_profile(callback.from_user.id, callback.from_user.id)
 
 # ================== ЗАПУСК ==================
 async def main():
-  logging.info("Удаляем webhook и pending updates...")
-  # Критично для предотвращения TelegramConflictError
-  await bot.delete_webhook(drop_pending_updates=True)
-  logging.info("Стартуем polling...")
-  await dp.start_polling(bot)
+    logging.info("Удаляем webhook и pending updates...")
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("Стартуем polling...")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
