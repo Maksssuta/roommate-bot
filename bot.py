@@ -12,7 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 logging.basicConfig(level=logging.INFO)
 
-API_TOKEN = "7993633698:AAGyhYZonytprP2UypN__galoGDgi2TvlBw"
+API_TOKEN = "8250866605:AAGKcaplvHLEW9BH7efSbbn2hSTN1K7TFZg"
 
 # ================== ИНИЦИАЛИЗАЦИЯ БОТА ==================
 bot = Bot(token=API_TOKEN)
@@ -232,11 +232,9 @@ async def process_like(callback: CallbackQuery):
 
 # ================== ЗАПУСК ==================
 async def main():
-    logging.info("Бот запущен и слушает сообщения...")
+    logging.info("Удаляем webhook (если есть) и запускаем polling...")
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
