@@ -14,7 +14,10 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 # ================== БАЗА ДАННЫХ ==================
-conn = sqlite3.connect("roommates.db")
+DB_PATH = os.getenv("DB_PATH", "roommates.db")
+os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
+
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
