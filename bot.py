@@ -5,7 +5,7 @@ import logging
 from collections import defaultdict
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -135,7 +135,7 @@ async def process_role(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 # Фото пользователя
-@dp.message(lambda message: message.photo, state=Form.waiting_for_user_photo)
+@dp.message(lambda message: message.photo, StateFilter(Form.waiting_for_user_photo))
 async def user_photo(message: Message, state: FSMContext):
     photo_id = message.photo[-1].file_id
     await state.update_data(user_photo=photo_id)
@@ -143,7 +143,7 @@ async def user_photo(message: Message, state: FSMContext):
     await Form.waiting_for_about.set()
 
 # Краткая информация
-@dp.message(state=Form.waiting_for_about)
+@dp.message(StateFilter(Form.waiting_for_about))
 async def about(message: Message, state: FSMContext):
     await state.update_data(about=message.text)
     data = await state.get_data()
@@ -159,7 +159,7 @@ async def about(message: Message, state: FSMContext):
         await state.clear()
 
 # Фото квартиры
-@dp.message(lambda message: message.photo, state=Form.waiting_for_apartment_photo)
+@dp.message(lambda message: message.photo, StateFilter(Form.waiting_for_apartment_photo))
 async def apartment_photo(message: Message, state: FSMContext):
     photo_id = message.photo[-1].file_id
     await state.update_data(apartment_photo=photo_id)
@@ -167,14 +167,14 @@ async def apartment_photo(message: Message, state: FSMContext):
     await Form.waiting_for_apartment_desc.set()
 
 # Описание квартиры
-@dp.message(state=Form.waiting_for_apartment_desc)
+@dp.message(StateFilter(Form.waiting_for_apartment_desc))
 async def apartment_desc(message: Message, state: FSMContext):
     await state.update_data(apartment_desc=message.text)
     await message.answer("Укажи цену квартиры (числом).")
     await Form.waiting_for_price.set()
 
 # Цена квартиры
-@dp.message(state=Form.waiting_for_price)
+@dp.message(StateFilter(Form.waiting_for_price))
 async def price(message: Message, state: FSMContext):
     if not message.text.isdigit():
         await message.answer("Пожалуйста, введи цену числом.")
@@ -237,5 +237,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
